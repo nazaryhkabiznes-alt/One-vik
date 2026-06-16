@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OneVik - Только Видео</title>
-    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <title>OneVik - Готовые Бесплатные Звонки</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -59,109 +59,156 @@
             cursor: pointer;
             margin: 5px;
             font-weight: bold;
+            transition: 0.2s;
         }
+        button:hover { background-color: #0084b4; }
         .connect-btn { background-color: #28a745; }
-        label { display: block; margin-bottom: 8px; font-weight: bold;}
+        .connect-btn:hover { background-color: #218838; }
+        label { display: block; margin-bottom: 8px; font-weight: bold; font-size: 16px;}
         .status { color: #aaa; margin-top: 10px; font-style: italic; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h1>OneVik Video Test</h1>
-    <p>Тестируем чистое видео без звука</p>
+    <h1>OneVik v2.0</h1>
+    <p>Работает через облако Supabase</p>
 
     <div class="controls">
-        <label for="roomCode">Введите 5 цифр комнаты:</label>
-        <input type="text" id="roomCode" placeholder="77777" oninput="this.value = this.value.replace(/[^0-9]/g, '')">
+        <label for="roomCode">Цифровой код комнаты (минимум 5 цифр):</label>
+        <input type="text" id="roomCode" placeholder="Например: 12345" oninput="this.value = this.value.replace(/[^0-9]/g, '')">
         <br>
-        <button onclick="createRoom()">1. Создать звонок</button>
-        <button class="connect-btn" onclick="joinRoom()">2. Подключиться</button>
+        <button onclick="startCall()">1. Создать звонок</button>
+        <button class="connect-btn" onclick="joinCall()">2. Подключиться к другу</button>
         <div class="status" id="statusField">Статус: Ожидание камеры...</div>
     </div>
 
     <div class="video-grid">
         <div>
-            <p>Вы</p>
+            <p>Вы (Локальное видео)</p>
             <video id="localVideo" autoplay playsinline muted></video>
         </div>
         <div>
-            <p>Друг</p>
-            <video id="remoteVideo" autoplay playsinline muted></video>
+            <p>Собеседник</p>
+            <video id="remoteVideo" autoplay playsinline></video>
         </div>
     </div>
 </div>
 
 <script>
-    let localStream;
-    let peer = null;
+    // Твои личные проверенные данные от Supabase
+    const SUPABASE_URL = 'https://omygvwvvfoanjeemcdfu.supabase.co';
+    const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9teWdidnV2Zm9hbmplZW1jZGZ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE1ODQ4NzEsImV4cCI6MjA5NzE2MDg3MX0.VBZfwntl-brI6vtjkP52PXqsIYLsx_pNokQq8qbeLuw';
+    
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+    let localStream;
+    let peerConnection;
+    let roomCode = '';
+
+    // Публичные STUN-сервера, чтобы обходить ограничения провайдеров
     const rtcConfig = {
         iceServers: [
             { urls: 'stun:stun.l.google.com:19302' },
             { urls: 'stun:stun1.l.google.com:19302' },
             { urls: 'stun:stun2.l.google.com:19302' }
-        ]
-    };
+        ],
+        sdpSemantics: 'unified-plan'
+};
 
-    // Шаг 1: Запрашиваем ТОЛЬКО ВИДЕО
+    // Автоматический запрос камеры и микрофона сразу при открытии OneVik
     window.addEventListener('DOMContentLoaded', async () => {
         try {
-            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
             document.getElementById('localVideo').srcObject = localStream;
-            updateStatus('Камера готова к работе.');
+            updateStatus('Камера подключена. Готов к созданию или входу.');
         } catch (e) {
-            updateStatus('Ошибка доступа к камере!');
+            updateStatus('Ошибка: Разрешите доступ к камере в браузере!');
             console.error(e);
         }
     });
 
     function updateStatus(text) {
         document.getElementById('statusField').innerText = 'Статус: ' + text;
-        console.log(text);
     }
 
-    // Создание комнаты
-    function createRoom() {
-        const code = document.getElementById('roomCode').value.trim();
-if (code.length < 5) return alert('Минимум 5 цифр!');
+    // Настройка WebRTC соединения
+    function initPeer() {
+        peerConnection = new RTCPeerConnection(rtcConfig);
+        
+        // Добавляем наши дорожки (видео + звук) для отправки
+        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-        updateStatus('Создание комнаты...');
-        peer = new Peer('onevik-' + code, { config: rtcConfig });
-
-        peer.on('open', () => updateStatus('Комната создана! Ждем друга...'));
-
-        peer.on('call', (call) => {
-            updateStatus('Друг звонит, отправляем видео...');
-            call.answer(localStream); 
-            
-            call.on('stream', (remoteStream) => {
-                updateStatus('Связь установлена! Выводим видео...');
-                const remoteVideo = document.getElementById('remoteVideo');
-                remoteVideo.srcObject = remoteStream;
-                remoteVideo.play().catch(err => console.log("Ошибка автоплея:", err));
-            });
-        });
+        // Ловим дорожки от собеседника
+        peerConnection.ontrack = (event) => {
+            const remoteVideo = document.getElementById('remoteVideo');
+            if (!remoteVideo.srcObject) {
+                remoteVideo.srcObject = event.streams[0];
+                updateStatus('Связь полностью установлена! Видео идет.');
+            }
+        };
     }
 
-    // Подключение к комнате
-    function joinRoom() {
-        const code = document.getElementById('roomCode').value.trim();
-        if (code.length < 5) return alert('Минимум 5 цифр!');
+    // 1. Создание звонка (Вы — Организатор)
+    async function startCall() {
+        roomCode = document.getElementById('roomCode').value.trim();
+        if (roomCode.length < 5) return alert('Код должен состоять минимум из 5 цифр!');
+        
+        initPeer();
+        updateStatus('Регистрация комнаты в базе данных...');
 
-        updateStatus('Вызываем друга...');
-        peer = new Peer({ config: rtcConfig });
+        // Подписываемся на изменения в Supabase в реальном времени (ждем ответ гостя)
+        supabase
+            .channel('calls-channel')
+            .on('postgres_changes', { event: 'UPDATE', filter: `id=eq.${roomCode}`, table: 'calls', schema: 'public' }, 
+            async (payload) => {
+                const data = JSON.parse(payload.new.data);
+                if (data.answer && !peerConnection.currentRemoteDescription) {
+                    updateStatus('Ответ от друга получен! Соединяем потоки...');
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+                }
+            })
+            .subscribe();
 
-        peer.on('open', () => {
-            const call = peer.call('onevik-' + code, localStream);
-            
-            call.on('stream', (remoteStream) => {
-                updateStatus('Успешное подключение! Выводим видео...');
-                const remoteVideo = document.getElementById('remoteVideo');
-                remoteVideo.srcObject = remoteStream;
-                remoteVideo.play().catch(err => console.log("Ошибка автоплея:", err));
-            });
-        });
+        // Когда WebRTC собрал сетевые маршруты, сохраняем оффер в базу
+        peerConnection.onicecandidate = async (event) => {
+            if (!event.candidate) {
+                const offerData = { offer: peerConnection.localDescription };
+                await supabase.from('calls').upsert({ id: roomCode, data: JSON.stringify(offerData) });
+                updateStatus('Комната создана успешно! Передай цифровой код другу.');
+            }
+        };
+
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+    }
+
+    // 2. Подключение к звонку (Вы — Гость)
+    async function joinCall() {
+        roomCode = document.getElementById('roomCode').value.trim();
+        if (roomCode.length < 5) return alert('Код должен состоять минимум из 5 цифр!');
+
+        initPeer();
+        updateStatus('Поиск комнаты в Supabase...');
+
+        // Забираем данные создателя звонка из таблицы
+        const { data, error } = await supabase.from('calls').select('data').eq('id', roomCode).single();
+        
+        if (error || !data) {
+            return alert('Комната не найдена! Убедись, что создатель уже нажал кнопку "Создать звонок".');
+        }
+
+        const roomData = JSON.parse(data.data);
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(roomData.offer));
+
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+
+        // Отправляем наш сгенерированный ответ обратно в базу
+        roomData.answer = peerConnection.localDescription;
+await supabase.from('calls').update({ data: JSON.stringify(roomData) }).eq('id', roomCode);
+        
+        updateStatus('Вы подключились! Ожидайте появление картинки...');
     }
 </script>
 
