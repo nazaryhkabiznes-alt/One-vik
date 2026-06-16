@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OneVik - Простые звонки</title>
+    <title>OneVik - Бесплатные звонки</title>
     <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
     <style>
         body {
@@ -78,7 +78,7 @@
 
 <div class="container">
     <h1>OneVik Video</h1>
-    <p>Введи от 5 цифр, чтобы создать звонок или подключиться к другу</p>
+    <p>Введите от 5 цифр, чтобы создать звонок или подключиться к другу</p>
 
     <div class="controls">
         <label for="roomCode">Цифровой код комнаты (только цифры, мин. 5 символов):</label>
@@ -107,21 +107,32 @@
     let localStream;
     let peer = null;
 
-    // Автоматически запрашиваем доступ к камере при загрузке страницы
+    // Расширенные настройки сети (STUN-серверы), чтобы пробивать блокировки провайдеров
+    const rtcConfig = {
+        iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+            { urls: 'stun:stun.services.mozilla.com' }
+        ],
+        sdpSemantics: 'unified-plan'
+    };
+
+    // Автоматически запрашиваем камеру и микрофон при открытии страницы
     window.addEventListener('DOMContentLoaded', async () => {
         try {
-            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
             document.getElementById('localVideo').srcObject = localStream;
             updateStatus('Камера готова. Введите код комнаты.');
         } catch (e) {
             updateStatus('Ошибка: разрешите доступ к камере и микрофону!');
-            alert('Для работы OneVik нужен доступ к камере и микрофону.');
+            alert('Для работы OneVik нужен доступ к камере и микрофону в настройках браузера.');
         }
     });
 
-    // Фильтр ввода: разрешаем ТОЛЬКО цифры
-function validateInput(input) {
-        input.value = input.value.replace(/[^0-36-9]/g, ''); // Удаляем всё, кроме цифр
+    // Фильтр ввода: разрешаем вводить ТЕПЕРЬ ТОЧНО только цифры (от 0 до 9)
+    function validateInput(input) {
+        input.value = input.value.replace(/[^0-9]/g, ''); 
     }
 
     // Проверка длины кода
@@ -137,27 +148,27 @@ function validateInput(input) {
         document.getElementById('statusField').innerText = 'Статус: ' + text;
     }
 
-    // Создание звонка (Вы — ведущий)
+    // Создание звонка (Вы — создатель комнаты)
     function createRoom() {
         const code = document.getElementById('roomCode').value.trim();
         if (!checkCode(code)) return;
 
         updateStatus('Создаем комнату ' + code + '...');
         
-        // Инициализируем соединение с вашим кастомным цифровым ID
-        peer = new Peer('onevik-' + code);
+        // Создаем соединение с сетевыми настройками
+        peer = new Peer('onevik-' + code, { config: rtcConfig });
 
         peer.on('open', (id) => {
             updateStatus('Комната ' + code + ' создана! Скинь этот код другу.');
         });
 
-        // Ждем, пока друг позвонит нам
+        // Слушаем входящий звонок от друга
         peer.on('call', (call) => {
             updateStatus('Друг подключается...');
-            call.answer(localStream); // Отвечаем своим видеопотоком
+            call.answer(localStream); // Отправляем другу свой поток видео/аудио
             
             call.on('stream', (remoteStream) => {
-                // Показываем видео друга
+                // Получаем и показываем видео друга
                 document.getElementById('remoteVideo').srcObject = remoteStream;
                 updateStatus('Связь установлена!');
             });
@@ -165,38 +176,38 @@ function validateInput(input) {
 
         peer.on('error', (err) => {
             if (err.type === 'unavailable-id') {
-                alert('Этот код уже занят кем-то другим! Придумайте другие цифры.');
+                alert('Этот код уже занят! Придумайте другие цифры.');
             } else {
-                alert('Ошибка: ' + err.type);
+                alert('Ошибка соединения: ' + err.type);
             }
-            updateStatus('Ошибка соединения.');
+            updateStatus('Ошибка.');
         });
     }
 
-    // Подключение к звонку (Вы — гость)
+    // Подключение к звонку (Вы — тот, кто вводит код)
     function joinRoom() {
         const code = document.getElementById('roomCode').value.trim();
         if (!checkCode(code)) return;
 
         updateStatus('Подключаемся к коду ' + code + '...');
 
-        // Создаем случайный ID для себя
-        peer = new Peer();
+        // Создаем свой peer-объект с настройками сети
+        peer = new Peer({ config: rtcConfig });
 
         peer.on('open', (id) => {
-            // Звоним другу по его цифровому коду
+            // Звоним другу по его коду и передаем свою камеру
             const call = peer.call('onevik-' + code, localStream);
             
             call.on('stream', (remoteStream) => {
-                // Получаем и показываем видео друга автоматически
+                // Принимаем видео друга и выводим на экран
                 document.getElementById('remoteVideo').srcObject = remoteStream;
                 updateStatus('Вы успешно подключились к звонку!');
             });
+        });
 
-            call.on('error', (err) => {
-                alert('Не удалось подключиться к другу. Проверьте правильность кода.');
-                updateStatus('Ошибка подключения.');
-            });
+        peer.on('error', (err) => {
+            alert('Не удалось подключиться. Проверьте код комнаты.');
+            updateStatus('Ошибка подключения.');
         });
     }
 </script>
