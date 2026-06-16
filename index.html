@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OneVik - Простые звонки</title>
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1e1e24;
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        h1 { color: #00aff0; margin-bottom: 5px; }
+        .container {
+            width: 90%;
+            max-width: 800px;
+            text-align: center;
+        }
+        .video-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+            margin-top: 20px;
+        }
+        video {
+            width: 100%;
+            background-color: #000;
+            border-radius: 8px;
+            border: 2px solid #00aff0;
+        }
+        .controls {
+            background: #2a2a35;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+        input {
+            width: 80%;
+            max-width: 300px;
+            padding: 12px;
+            background: #111;
+            color: #00ff00;
+            border: 1px solid #444;
+            font-size: 18px;
+            text-align: center;
+            font-family: monospace;
+            border-radius: 5px;
+            margin-bottom: 15px;
+        }
+        button {
+            background-color: #00aff0;
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            transition: 0.3s;
+            font-weight: bold;
+        }
+        button:hover { background-color: #0084b4; }
+        .connect-btn { background-color: #28a745; }
+        .connect-btn:hover { background-color: #218838; }
+        label { display: block; margin-bottom: 8px; font-weight: bold; font-size: 16px;}
+        .status { color: #aaa; margin-top: 10px; font-style: italic; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>OneVik Video</h1>
+    <p>Введи от 5 цифр, чтобы создать звонок или подключиться к другу</p>
+
+    <div class="controls">
+        <label for="roomCode">Цифровой код комнаты (только цифры, мин. 5 символов):</label>
+        <input type="text" id="roomCode" placeholder="Например: 77777" oninput="validateInput(this)">
+        
+        <br>
+        <button onclick="createRoom()">1. Создать звонок с этим кодом</button>
+        <button class="connect-btn" onclick="joinRoom()">2. Подключиться к другу</button>
+        
+        <div class="status" id="statusField">Статус: Ожидание камеры...</div>
+    </div>
+
+    <div class="video-grid">
+        <div>
+            <p>Вы (Локальное видео)</p>
+            <video id="localVideo" autoplay playsinline muted></video>
+        </div>
+        <div>
+            <p>Собеседник (Удаленное видео)</p>
+            <video id="remoteVideo" autoplay playsinline></video>
+        </div>
+    </div>
+</div>
+
+<script>
+    let localStream;
+    let peer = null;
+
+    // Автоматически запрашиваем доступ к камере при загрузке страницы
+    window.addEventListener('DOMContentLoaded', async () => {
+        try {
+            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            document.getElementById('localVideo').srcObject = localStream;
+            updateStatus('Камера готова. Введите код комнаты.');
+        } catch (e) {
+            updateStatus('Ошибка: разрешите доступ к камере и микрофону!');
+            alert('Для работы OneVik нужен доступ к камере и микрофону.');
+        }
+    });
+
+    // Фильтр ввода: разрешаем ТОЛЬКО цифры
+function validateInput(input) {
+        input.value = input.value.replace(/[^0-36-9]/g, ''); // Удаляем всё, кроме цифр
+    }
+
+    // Проверка длины кода
+    function checkCode(code) {
+        if (!code || code.length < 5) {
+            alert('Код должен содержать минимум 5 цифр!');
+            return false;
+        }
+        return true;
+    }
+
+    function updateStatus(text) {
+        document.getElementById('statusField').innerText = 'Статус: ' + text;
+    }
+
+    // Создание звонка (Вы — ведущий)
+    function createRoom() {
+        const code = document.getElementById('roomCode').value.trim();
+        if (!checkCode(code)) return;
+
+        updateStatus('Создаем комнату ' + code + '...');
+        
+        // Инициализируем соединение с вашим кастомным цифровым ID
+        peer = new Peer('onevik-' + code);
+
+        peer.on('open', (id) => {
+            updateStatus('Комната ' + code + ' создана! Скинь этот код другу.');
+        });
+
+        // Ждем, пока друг позвонит нам
+        peer.on('call', (call) => {
+            updateStatus('Друг подключается...');
+            call.answer(localStream); // Отвечаем своим видеопотоком
+            
+            call.on('stream', (remoteStream) => {
+                // Показываем видео друга
+                document.getElementById('remoteVideo').srcObject = remoteStream;
+                updateStatus('Связь установлена!');
+            });
+        });
+
+        peer.on('error', (err) => {
+            if (err.type === 'unavailable-id') {
+                alert('Этот код уже занят кем-то другим! Придумайте другие цифры.');
+            } else {
+                alert('Ошибка: ' + err.type);
+            }
+            updateStatus('Ошибка соединения.');
+        });
+    }
+
+    // Подключение к звонку (Вы — гость)
+    function joinRoom() {
+        const code = document.getElementById('roomCode').value.trim();
+        if (!checkCode(code)) return;
+
+        updateStatus('Подключаемся к коду ' + code + '...');
+
+        // Создаем случайный ID для себя
+        peer = new Peer();
+
+        peer.on('open', (id) => {
+            // Звоним другу по его цифровому коду
+            const call = peer.call('onevik-' + code, localStream);
+            
+            call.on('stream', (remoteStream) => {
+                // Получаем и показываем видео друга автоматически
+                document.getElementById('remoteVideo').srcObject = remoteStream;
+                updateStatus('Вы успешно подключились к звонку!');
+            });
+
+            call.on('error', (err) => {
+                alert('Не удалось подключиться к другу. Проверьте правильность кода.');
+                updateStatus('Ошибка подключения.');
+            });
+        });
+    }
+</script>
+
+</body>
+</html>
